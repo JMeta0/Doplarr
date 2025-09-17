@@ -3,7 +3,8 @@
    [clojure.core.async :as a]
    [doplarr.state :as state]
    [doplarr.utils :as utils]
-   [fmnoise.flow :as flow :refer [then]]))
+   [fmnoise.flow :as flow :refer [then else]]
+   [taoensso.timbre :refer [fatal]]))
 
 (def base-url (delay (str (:sonarr/url @state/config) "/api/v3")))
 (def api-key  (delay (:sonarr/api @state/config)))
@@ -34,6 +35,20 @@
    GET
    utils/process-rootfolders
    "/rootfolder"))
+
+(defn tags []
+  (utils/request-and-process-body
+   GET
+   utils/process-tags
+   "/tag"))
+
+(defn create-tag [tag-name]
+  (a/go
+    (->> (a/<! (POST "/tag" {:form-params {:label tag-name}
+                             :content-type :json}))
+         (then #(->> (utils/from-camel (:body %))
+                     :id))
+         (else #(fatal % "Error creating tag")))))
 
 (defn get-from-tvdb [tvdb-id]
   (utils/request-and-process-body
@@ -100,13 +115,20 @@
   (let [seasons (-> (generate-request-seasons details (:season payload))
                     (generate-seasons (count (:seasons details))))]
     (if (:id payload)
-      (assoc details
-             :seasons seasons
-             :quality-profile-id (:quality-profile-id payload))
+      (cond-> (assoc details
+                     :seasons seasons
+                     :quality-profile-id (:quality-profile-id payload))
+        (:tag-ids payload) (assoc :tags (:tag-ids payload)))
       (-> payload
           (assoc :monitored true
                  :seasons seasons
                  :add-options {:ignore-episodes-with-files true
                                :search-for-missing-episodes true})
           (dissoc :season
-                  :format)))))
+                  :format
+                  :discord-notification
+                  :guild-id)
+          (#(if (:tag-ids %)
+              (assoc % :tags (:tag-ids %))
+              %))
+          (dissoc :tag-ids)))))

@@ -14,11 +14,12 @@
    "/series/lookup"
    {:query-params {:term term}}))
 
-(defn additional-options [result _]
+(defn additional-options [result _ guild-id]
   (a/go
     (let [quality-profiles (a/<! (impl/quality-profiles))
           language-profiles (a/<! (impl/language-profiles))
           rootfolders (a/<! (impl/rootfolders))
+          tags (when guild-id (a/<! (impl/tags)))
           details (a/<! (impl/get-from-tvdb (:tvdb-id result)))
           seasons (->> (:seasons details)
                        (filter #(pos? (:season-number %)))
@@ -31,7 +32,8 @@
                   sonarr/rootfolder]} @state/config
           default-profile-id (utils/id-from-name quality-profiles quality-profile)
           default-language-id (utils/id-from-name language-profiles language-profile)
-          default-root-folder (utils/id-from-name rootfolders rootfolder)]
+          default-root-folder (utils/id-from-name rootfolders rootfolder)
+          notification-tag (when guild-id (utils/find-or-suggest-notification-tag tags guild-id))]
       (when (and quality-profile (nil? default-profile-id))
         (warn "Default quality profile in config doesn't exist in backend, check spelling"))
       (when (and language-profile (nil? default-language-id))
@@ -54,7 +56,13 @@
        :rootfolder-id (cond
                         default-root-folder default-root-folder
                         (= 1 (count rootfolders)) (:id (first rootfolders))
-                        :else rootfolders)})))
+                        :else rootfolders)
+       :discord-notification (if guild-id
+                               (list {:name "No Notification" :id 0}
+                                     {:name (str "Enable Discord notifications for this server"
+                                                (when (and notification-tag (:suggested notification-tag)) " (will create tag)"))
+                                      :id 1})
+                               0)})))
 
 (defn request-embed [{:keys [title quality-profile-id language-profile-id tvdb-id season rootfolder-id]} _]
   (a/go
@@ -79,6 +87,17 @@
               status (impl/status details (:season payload))
               rfs (a/<! (impl/rootfolders))
               payload (assoc payload :root-folder-path (utils/name-from-id rfs (:rootfolder-id payload)))
+              ;; Handle Discord notification tag
+              payload (if (and (= 1 (:discord-notification payload)) (:guild-id payload))
+                        (let [guild-id (:guild-id payload)
+                              tag-name (utils/discord-notification-tag-name guild-id)
+                              tags (a/<! (impl/tags))
+                              existing-tag (first (filter #(= (:name %) tag-name) tags))
+                              tag-id (if existing-tag
+                                       (:id existing-tag)
+                                       (a/<! (impl/create-tag tag-name)))]
+                          (assoc payload :tag-ids [tag-id]))
+                        payload)
               request-payload (impl/request-payload payload details)]
           (if status
             status

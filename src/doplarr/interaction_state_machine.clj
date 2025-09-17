@@ -14,9 +14,10 @@
 
 (defn start-interaction! [interaction]
   (a/go
-    (let [uuid (str (java.util.UUID/randomUUID))
+      (let [uuid (str (java.util.UUID/randomUUID))
           id (:id interaction)
           token (:token interaction)
+          guild-id (:guild-id interaction)
           payload-opts (:options (:payload interaction))
           media-type (first (keys payload-opts))
           query (s/select-one [media-type :query] payload-opts)
@@ -35,6 +36,7 @@
         (swap! state/cache assoc uuid {:results results
                                        :media-type media-type
                                        :token token
+                                       :guild-id guild-id
                                        :last-modified (System/currentTimeMillis)})
                                         ; Create dropdown for search results
         (->> @(m/edit-original-interaction-response! messaging bot-id token (discord/search-response results uuid))
@@ -59,10 +61,10 @@
 
 (defmethod process-event! "result-select" [_ interaction uuid _]
   (a/go
-    (let [{:keys [results media-type]} (get @state/cache uuid)
+      (let [{:keys [results media-type guild-id]} (get @state/cache uuid)
           result (nth results (discord/dropdown-result interaction))
           add-opts (log-on-error
-                    (a/<! ((utils/media-fn media-type "additional-options") result media-type))
+                    (a/<! ((utils/media-fn media-type "additional-options") result media-type guild-id))
                     "Exception thrown from additional-options")
           pending-opts (->> add-opts
                             (filter #(seq? (second %)))
@@ -93,13 +95,13 @@
 
 (defmethod process-event! "request" [_ interaction uuid format]
   (let [{:keys [messaging bot-id]} @state/discord
-        {:keys [payload media-type token embed]} (get @state/cache uuid)
+        {:keys [payload media-type token embed guild-id]} (get @state/cache uuid)
         {:keys [user-id channel-id]} interaction]
     (letfn [(msg-resp [msg] (->> @(m/edit-original-interaction-response! messaging bot-id token (discord/content-response msg))
                                  (else #(fatal % "Error in message response"))))]
       (->>  (log-on-error
              (a/<!! ((utils/media-fn media-type "request")
-                     (assoc payload :format (keyword format) :discord-id user-id)
+                     (assoc payload :format (keyword format) :discord-id user-id :guild-id guild-id)
                      media-type))
              "Exception from request")
             (then (fn [status]

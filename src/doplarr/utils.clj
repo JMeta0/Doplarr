@@ -110,3 +110,15 @@
   (->> (from-camel resp)
        (map #(set/rename-keys % {:label :name}))
        (#(conj % {:name "No Tag" :id -1}))))
+
+(defn discord-notification-tag-name [guild-id]
+  "Generate a tag name for Discord notifications based on guild ID"
+  (str "discord-notify-" guild-id))
+
+(defn find-or-suggest-notification-tag [tags guild-id]
+  "Find existing notification tag for guild or suggest creating one"
+  (let [tag-name (discord-notification-tag-name guild-id)
+        existing-tag (first (filter #(= (:name %) tag-name) tags))]
+    (if existing-tag
+      existing-tag
+      {:name tag-name :id nil :suggested true})))

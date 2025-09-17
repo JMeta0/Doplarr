@@ -1,7 +1,10 @@
 (ns doplarr.backends.radarr.impl
   (:require
+   [clojure.core.async :as a]
    [doplarr.state :as state]
-   [doplarr.utils :as utils]))
+   [doplarr.utils :as utils]
+   [fmnoise.flow :refer [then else]]
+   [taoensso.timbre :refer [fatal]]))
 
 (def base-url (delay (str (:radarr/url @state/config) "/api/v3")))
 (def api-key  (delay (:radarr/api @state/config)))
@@ -30,6 +33,14 @@
    utils/process-tags
    "/tag"))
 
+(defn create-tag [tag-name]
+  (a/go
+    (->> (a/<! (POST "/tag" {:form-params {:label tag-name}
+                             :content-type :json}))
+         (then #(->> (utils/from-camel (:body %))
+                     :id))
+         (else #(fatal % "Error creating tag")))))
+
 (defn get-from-tmdb [tmdb-id]
   (utils/request-and-process-body
    GET
@@ -49,6 +60,11 @@
 
 (defn request-payload [payload]
   (-> payload
-      (select-keys [:title :tmdb-id :quality-profile-id :root-folder-path])
+      (select-keys [:title :tmdb-id :quality-profile-id :root-folder-path :tag-ids])
       (assoc :monitored true
-             :add-options {:search-for-movie true})))
+             :add-options {:search-for-movie true})
+      (#(if (:tag-ids %)
+          (-> %
+              (assoc :tags (:tag-ids %))
+              (dissoc :tag-ids))
+          %))))

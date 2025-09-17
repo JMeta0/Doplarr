@@ -14,7 +14,7 @@
 
 ; In Overseerr, the only additional option we'll need is which season,
 ; if the request type is a series
-(defn additional-options [result media-type]
+(defn additional-options [result media-type guild-id]
   (a/go
     (let [details (a/<! (impl/details (:id result) media-type))
           {:keys [partial-seasons]} @state/config]
